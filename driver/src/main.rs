@@ -60,12 +60,14 @@ fn read_line<const N: usize>(msg: &str) -> [u8; N] {
                 break;
             }
         }
-        //check for 0x
-        if let Ok(decoded_hex) = hex::decode(&line[2..]) {
-            if decoded_hex.len() == N && &line[..2] == "0x" {
-                println!("  assuming hex encoding");
-                buf.copy_from_slice(&decoded_hex);
-                break;
+        if line.len() >= 2 {
+            //check for 0x
+            if let Ok(decoded_hex) = hex::decode(&line[2..]) {
+                if decoded_hex.len() == N && &line[..2] == "0x" {
+                    println!("  assuming hex encoding");
+                    buf.copy_from_slice(&decoded_hex);
+                    break;
+                }
             }
         }
 
