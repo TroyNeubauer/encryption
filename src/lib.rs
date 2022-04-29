@@ -1,6 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(feature = "std"), no_std)]
-//! 
+//!
 //!
 //! ```
 //! use encryption::{Key, alg1::{CipherBlock, Algorithm1}};
