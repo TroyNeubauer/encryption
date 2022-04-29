@@ -11,7 +11,7 @@ fn main() {
     rng.fill_bytes(&mut key);
     let key = encryption::Key::new(key);
 
-    let cipher = encryption::alg1::MainCipher::new(&key, rng.gen());
+    let cipher = encryption::alg1::Algorithm1::new(&key, rng.gen());
     let mut block = encryption::alg1::CipherBlock::new(plaintext);
     cipher.cipher_block(0, &mut block);
     println!("{:b}", V(block.0.to_vec()));

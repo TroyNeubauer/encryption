@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = ["std"]
 std = ["lazy_static"]
+word_xor = []
 
 [dependencies]
 lazy_static = { version = "1.4.0", optional = true }

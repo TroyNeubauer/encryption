@@ -3,7 +3,7 @@
 //! 
 //!
 //! ```
-//! use encryption::{Key, CipherBlock, MainCipher};
+//! use encryption::{Key, alg1::{CipherBlock, Algorithm1}};
 //! use rand::{RngCore, SeedableRng};
 //!
 //! // Use a more secure seeding algorithm!
@@ -26,7 +26,7 @@
 //!
 //! // Create our block and cipher
 //! let mut block = CipherBlock::new(block_bytes);
-//! let cipher = MainCipher::new(&key, index_key);
+//! let cipher = Algorithm1::new(&key, index_key);
 //!
 //! // Each message block is encrypted with a different index that determines which part of the key
 //! // is Xored with the plaintext. This should change for every message. Incrementing is fine
@@ -43,3 +43,4 @@ mod algorithm;
 pub use algorithm::{GenericCipher, GenericCipherBlock, Index};
 
 pub mod alg1;
+pub mod alg2;

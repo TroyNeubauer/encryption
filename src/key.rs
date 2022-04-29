@@ -1,4 +1,5 @@
 use core::mem::size_of;
+use core::ops::{BitXorAssign, Shl, Shr};
 #[cfg(feature = "std")]
 use lazy_static::lazy_static;
 #[cfg(feature = "std")]
@@ -9,7 +10,16 @@ use std::{collections::HashMap, sync::Mutex};
 /// # Safety
 /// 1. All bit patterns of implementing types must be valid
 /// 2. Implementing types must require the alignment of `Self` to be less than or equal to 8 bytes
-pub unsafe trait Word: Copy + From<u8> {}
+pub unsafe trait Word:
+    Copy
+    + From<u8>
+    + BitXorAssign
+    + Shl<usize, Output = Self>
+    + Shr<usize, Output = Self>
+    + core::fmt::Debug
+    + core::fmt::Display
+{
+}
 
 /// Represents an `N` element key of type `W`.
 /// Used so that larger element sizes such as u32 or u64 can be used, increasing effiency over u8
@@ -27,7 +37,10 @@ lazy_static! {
 #[cfg(test)]
 pub fn print_freq() {
     let lock = FREQ.lock().unwrap();
-    for (k, v) in lock.iter() {
+    let mut vec: Vec<(_, _)> = lock.iter().collect();
+    vec.sort_unstable();
+
+    for (k, v) in vec {
         println!("{}: {}", k, v);
     }
 }
@@ -42,9 +55,9 @@ impl<const N: usize> Key<N> {
         Self(key)
     }
 
-    /// Returns a slice len `key_len` of this key based on word offset module the key length
-    /// `L` is the number of elements returned
-    pub fn subkey<W: Word, const L: usize>(&self, word_offset: usize) -> &[W; L] {
+    // checks to ensure that `L` words of type `W` can be obtained from this key while staying in
+    // bounds
+    fn check_element_length<W: Word, const L: usize>(&self) -> usize {
         let key_elements = N / size_of::<W>();
         if L > key_elements {
             panic!(
@@ -52,6 +65,13 @@ impl<const N: usize> Key<N> {
                 N, L * size_of::<W>(), L
             );
         }
+        key_elements
+    }
+
+    /// Returns a slice len `key_len` of this key based on word offset module the key length
+    /// `L` is the number of elements returned
+    pub fn subkey<W: Word, const L: usize>(&self, word_offset: usize) -> &[W; L] {
+        let key_elements = self.check_element_length::<W, L>();
 
         // We need to find `L` contiguous elements, so the maximum index (exclusive) is `L`
         // less than the total length of the key
@@ -87,6 +107,22 @@ impl<const N: usize> Key<N> {
         //
         // See: https://doc.rust-lang.org/reference/type-layout.html#array-layout
         unsafe { &*(subkey_start as *const [W; L]) }
+    }
+
+    pub fn as_words<W: Word>(&self) -> &[W] {
+        let ptr: *const u8 = self.0.as_ptr();
+        let ptr: *const W = ptr as *const _;
+        let len = self.0.len() / size_of::<W>();
+
+        // SAFETY:
+        // 1. ptr is readabel for up to len elements, because each element is `size_of::<W>()`,
+        //    bytes
+        // 2. ptr is aligned for `W`, because `Word` is only implemented for types < 8 bytes large,
+        //    and `Self` is aligned to at least an 8 byte boundry
+        // 3. The lifetime of `self.0` is 'self, so the lifetime elision knows that the returned
+        //    lifetime is 'self
+        //
+        unsafe { core::slice::from_raw_parts(ptr, len) }
     }
 }
 
@@ -145,3 +181,5 @@ unsafe impl Word for u8 {}
 unsafe impl Word for u16 {}
 /// SAFETY: u32 has no invalid bit patterns
 unsafe impl Word for u32 {}
+/// SAFETY: u64 has no invalid bit patterns
+unsafe impl Word for u64 {}

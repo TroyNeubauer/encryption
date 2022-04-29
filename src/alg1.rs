@@ -1,51 +1,57 @@
+//! Algorithm fon encrypting 28 byte blocks with 32 bit indices and the identity hash function
+
 use core::mem::size_of;
 
 use crate::{GenericCipher, GenericCipherBlock, Key};
 
-pub type CipherBlock = GenericCipherBlock<28>;
+const BLOCK_SIZE: usize = 28;
+const ELEMENT_COUNT: usize = 7;
+
+pub type CipherBlock = GenericCipherBlock<BLOCK_SIZE>;
 
 fn identity_hash(index: u32) -> u32 {
     index
 }
 
-pub struct MainCipher<'k, Hash, const KEY_SIZE: usize>(GenericCipher<'k, Hash, u32, KEY_SIZE, 28>)
-where
-    Hash: Fn(u32) -> u32;
+pub struct Algorithm1<'k, const KEY_SIZE: usize>(
+    GenericCipher<'k, fn(u32) -> u32, u32, KEY_SIZE, BLOCK_SIZE>,
+);
 
-impl<'k, const KEY_BYTES: usize> MainCipher<'k, fn(u32) -> u32, KEY_BYTES> {
+impl<'k, const KEY_BYTES: usize> Algorithm1<'k, KEY_BYTES> {
     pub fn new(key: &'k Key<KEY_BYTES>, index_key: u32) -> Self {
         Self(GenericCipher::new(identity_hash, key, index_key))
     }
 
     /// Encrypts or decrypts a single block using `key` and `index`.
     /// Because Xor is used, the encryption and decryption operation is the same
-    pub fn cipher_block(&self, index: u32, block: &mut GenericCipherBlock<28>) {
-        self.0.cipher_block::<7>(index, block.into())
+    pub fn cipher_block(&self, index: u32, block: &mut GenericCipherBlock<BLOCK_SIZE>) {
+        self.0
+            .cipher_block::<ELEMENT_COUNT, 4, u32>(index, block.into())
     }
 }
 
 /// High level index block for storing index and encrypted data togther, optimized for 32 bytes
 /// messages
-#[repr(C)]
+#[repr(C, align(4))]
 #[derive(Default)]
 pub struct IndexedBlock {
     tag: Tag31_1,
-    data: [u32; 7],
+    data: [u32; ELEMENT_COUNT],
 }
 
 impl IndexedBlock {
     pub fn new() -> Self {
         Self {
             tag: Tag31_1::new(0),
-            data: [0; 7],
+            data: [0; ELEMENT_COUNT],
         }
     }
 
-    pub fn data(&self) -> &[u32; 7] {
+    pub fn data(&self) -> &[u32; ELEMENT_COUNT] {
         &self.data
     }
 
-    pub fn data_mut(&mut self) -> &mut [u32; 7] {
+    pub fn data_mut(&mut self) -> &mut [u32; ELEMENT_COUNT] {
         &mut self.data
     }
 
@@ -67,19 +73,17 @@ impl IndexedBlock {
         unsafe { core::slice::from_raw_parts_mut(ptr, size_of::<Self>()) }
     }
 
-    pub fn do_cipher<Hash, const KEY_SIZE: usize>(&mut self, cipher: &MainCipher<'_, Hash, KEY_SIZE>) where
-        Hash: Fn(u32) -> u32
-    {
+    pub fn do_cipher<const KEY_SIZE: usize>(&mut self, cipher: &Algorithm1<'_, KEY_SIZE>) {
         let index = Tag::get_index(self.tag());
-        let data: &mut [u32; 7] = &mut self.data;
+        let data: &mut [u32; ELEMENT_COUNT] = &mut self.data;
 
         //SAFETY:
-        // 1. size_of([u32; 7]) is 28 so we are transmuting to a pointer with the same length
+        // 1. size_of([u32; ELEMENT_COUNT]) is BLOCK_SIZE so we are transmuting to a pointer with the same length
         // 2. u8 can have any alignment
         // 3. The last readable index is in range of the same allocated object by the math above
-        let data: &mut [u8; 28] = unsafe { core::mem::transmute(data) };
+        let data: &mut [u8; BLOCK_SIZE] = unsafe { core::mem::transmute(data) };
         let block = crate::algorithm::CipherBlockRef::new(data);
-        cipher.0.cipher_block::<7>(index, block)
+        cipher.0.cipher_block::<ELEMENT_COUNT, 4, u32>(index, block)
     }
 }
 
@@ -107,10 +111,11 @@ pub trait Tag {
     fn tag_bits_count() -> usize;
 }
 
-const INDEX_MASK_31: u32 = 0x7FFF_FFFF;
+pub(crate) const INDEX_MASK_31: u32 = 0x7FFF_FFFF;
 const TAG_31_BITS_OFFSET: u32 = 31;
 
 #[derive(Default)]
+#[repr(transparent)]
 pub struct Tag31_1(u32);
 
 impl Tag for Tag31_1 {
@@ -151,7 +156,7 @@ mod tests {
         for i in 0..10 {
             let mut rng = rand::rngs::StdRng::seed_from_u64(i);
 
-            let mut block_bytes = [0u8; 28];
+            let mut block_bytes = [0u8; BLOCK_SIZE];
             rng.fill_bytes(&mut block_bytes);
             let original_block = Clone::clone(&block_bytes);
 
@@ -164,7 +169,7 @@ mod tests {
             let index_key = u32::from_ne_bytes(index_key);
 
             let mut block = CipherBlock::new(block_bytes);
-            let cipher = MainCipher::new(&key, index_key);
+            let cipher = Algorithm1::new(&key, index_key);
 
             //let index = rng.gen();
             let index = i as u32;
@@ -178,28 +183,30 @@ mod tests {
 
     #[test]
     fn encrypt_and_decrypt() {
+        let mut i = 0;
+        for _ in 0..100 {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(i);
+            let mut index_key = [0u8; 4];
+            rng.fill_bytes(&mut index_key);
+            let index_key = u32::from_ne_bytes(index_key);
 
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0xDEADBEEF);
-        let mut index_key = [0u8; 4];
-        rng.fill_bytes(&mut index_key);
-        let index_key = u32::from_ne_bytes(index_key);
+            let mut key_bytes = [0u8; 64];
+            rng.fill_bytes(&mut key_bytes);
+            let key = Key::new(key_bytes);
+            let cipher = Algorithm1::new(&key, index_key);
 
-        let mut key_bytes = [0u8; 64];
-        rng.fill_bytes(&mut key_bytes);
-        let key = Key::new(key_bytes);
-        let cipher = MainCipher::new(&key, index_key);
+            for _ in 0..100 {
+                let mut block = IndexedBlock::new();
+                rng.fill_bytes(block.as_bytes_mut());
+                block.tag().set_index(i as u32);
+                block.tag().set_tag(0);
+                let original_block = block.data().to_vec();
 
-        for i in 0..10 {
-
-            let mut block = IndexedBlock::new();
-            rng.fill_bytes(block.as_bytes_mut());
-            block.tag().set_index(i as u32);
-            block.tag().set_tag(0);
-            let original_block = block.data().to_vec(); 
-
-            block.do_cipher(&cipher);
-            block.do_cipher(&cipher);
-            assert_eq!(&original_block, block.data().as_slice());
+                block.do_cipher(&cipher);
+                block.do_cipher(&cipher);
+                assert_eq!(&original_block, block.data().as_slice());
+                i += 1;
+            }
         }
 
         crate::key::print_freq();
